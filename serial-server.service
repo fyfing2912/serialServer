@@ -1,0 +1,17 @@
+[Unit]
+Description=Software Serial Server
+After=network.target
+
+[Service]
+Type=simple
+User=%I
+WorkingDirectory=/opt/serial-server
+Environment="PATH=/opt/serial-server/venv/bin"
+ExecStart=/opt/serial-server/venv/bin/python /opt/serial-server/main.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

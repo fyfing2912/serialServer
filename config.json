@@ -1,0 +1,60 @@
+{
+  "ports": [
+    {
+      "port": 5001,
+      "enabled": true,
+      "mode": "physical",
+      "serial_device": "/dev/ttyUSB0",
+      "serial_params": {
+        "baud_rate": 9600,
+        "data_bits": 8,
+        "stop_bits": "1",
+        "parity": "None"
+      },
+      "response_rules": []
+    },
+    {
+      "port": 6001,
+      "enabled": true,
+      "mode": "simulator",
+      "serial_device": "",
+      "serial_params": {
+        "baud_rate": 9600,
+        "data_bits": 8,
+        "stop_bits": "1",
+        "parity": "None"
+      },
+      "response_rules": [
+        {
+          "type": "exact",
+          "match": "AT\\r",
+          "reply": "OK\\r\\n"
+        },
+        {
+          "type": "exact",
+          "match": "AT\\n",
+          "reply": "OK\\r\\n"
+        },
+        {
+          "type": "contains",
+          "match": "version",
+          "reply": "simulator v1.0\\r\\n"
+        }
+      ]
+    },
+    {
+      "port": 7001,
+      "enabled": true,
+      "mode": "simulator",
+      "serial_device": "",
+      "serial_params": {
+        "baud_rate": 115200,
+        "data_bits": 8,
+        "stop_bits": "1",
+        "parity": "None"
+      },
+      "response_rules": []
+    }
+  ],
+  "service_running": true
+}
