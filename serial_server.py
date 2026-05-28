@@ -3,8 +3,9 @@ import asyncio
 import logging
 import struct
 import threading
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     import serial
@@ -53,28 +54,41 @@ def match_rule(data: bytes, rules: List[Dict[str, str]]) -> bytes:
         text = data.decode('utf-8', errors='replace')
     except:
         return data
-    
+
+    # 分类规则
+    exact_dict = {}
+    contains_list = []
+    wildcard_list = []
+
     for rule in rules:
-        match_pattern = rule.get('match', '')
-        reply_pattern = rule.get('reply', '')
-        
         rule_type = rule.get('type', 'exact')
-        
+        match_pattern = unescape(rule.get('match', ''))
+        reply_pattern = unescape(rule.get('reply', ''))
+
         if rule_type == 'exact':
-            if text == match_pattern:
-                logger.debug(f"Rule matched: exact '{match_pattern}'")
-                return reply_pattern.encode('utf-8')
+            exact_dict[match_pattern] = reply_pattern
         elif rule_type == 'contains':
-            if match_pattern in text:
-                logger.debug(f"Rule matched: contains '{match_pattern}'")
-                return reply_pattern.encode('utf-8')
-        elif rule_type == 'wildcard':
-            if match_pattern.endswith(' *'):
-                prefix = match_pattern[:-2]
-                if text.startswith(prefix):
-                    logger.debug(f"Rule matched: wildcard '{match_pattern}'")
-                    return reply_pattern.encode('utf-8')
-    
+            contains_list.append((match_pattern, reply_pattern))
+        elif rule_type == 'wildcard' and match_pattern.endswith(' *'):
+            wildcard_list.append((match_pattern[:-2], reply_pattern))
+
+    # O(1) exact 查找
+    if text in exact_dict:
+        logger.debug(f"Rule matched: exact '{text}'")
+        return exact_dict[text].encode('utf-8')
+
+    # contains 查找
+    for match_pattern, reply_pattern in contains_list:
+        if match_pattern in text:
+            logger.debug(f"Rule matched: contains '{match_pattern}'")
+            return reply_pattern.encode('utf-8')
+
+    # wildcard 查找
+    for prefix, reply_pattern in wildcard_list:
+        if text.startswith(prefix):
+            logger.debug(f"Rule matched: wildcard '{prefix} *'")
+            return reply_pattern.encode('utf-8')
+
     return data
 
 
@@ -87,14 +101,14 @@ class TelnetStateMachine:
     def __init__(self):
         self.state = self.NORMAL
         self.sb_option = None
-        self.sb_buffer = bytearray()
+        self.sb_buffer = deque()
         self.iac_command = None
         self.option_byte = None
     
     def reset(self):
         self.state = self.NORMAL
         self.sb_option = None
-        self.sb_buffer = bytearray()
+        self.sb_buffer = deque()
         self.iac_command = None
         self.option_byte = None
 
@@ -140,6 +154,7 @@ class PhysicalSerialPort:
         self.on_data_received: Optional[Callable[[bytes], None]] = None
         self.executor = ThreadPoolExecutor(max_workers=2)
         self._lock = threading.Lock()
+        self._read_event = threading.Event()
     
     def connect(self) -> bool:
         """Connect to the physical serial port."""
@@ -215,7 +230,8 @@ class PhysicalSerialPort:
                 except Exception as e:
                     logger.error(f"❌ [物理串口] 关闭串口时出错: {e}")
                 self.serial_port = None
-            
+
+            self.executor.shutdown(wait=False)
             logger.info(f"✅ [物理串口] 断开连接完成")
     
     def _read_loop(self):
@@ -229,7 +245,7 @@ class PhysicalSerialPort:
                         logger.info(f"📥 [物理串口] 线程读取到 {len(data)} 字节: {data.hex()}")
                         self.on_data_received(data)
                 else:
-                    threading.Event().wait(0.01)
+                    self._read_event.wait(0.01)
             except Exception as e:
                 if self.running:
                     logger.error(f"❌ [物理串口] 读取串口时出错: {e}")
@@ -295,15 +311,22 @@ class PhysicalSerialPort:
 
 
 class VirtualSerialPort:
-    def __init__(self, port: int, serial_params: Dict[str, Any], response_rules: List[Dict[str, str]], 
+    def __init__(self, port: int, serial_params: Dict[str, Any], response_rules: List[Dict[str, str]],
                  serial_device: str = '', mode: str = 'simulator'):
         self.port = port
         self.serial_params = serial_params.copy()
-        self.response_rules = _unescape_rules(response_rules)
+        self._rules_raw = response_rules
+        self._unescaped_rules: Optional[List[Dict[str, str]]] = None
         self.serial_device = serial_device
         self.mode = mode  # 'simulator' or 'physical'
         self._lock = asyncio.Lock()
         self.physical_port: Optional[PhysicalSerialPort] = None
+
+    @property
+    def response_rules(self) -> List[Dict[str, str]]:
+        if self._unescaped_rules is None:
+            self._unescaped_rules = _unescape_rules(self._rules_raw)
+        return self._unescaped_rules
     
     async def update_params(self, new_params: Dict[str, Any]):
         async with self._lock:
@@ -315,7 +338,8 @@ class VirtualSerialPort:
     
     async def update_rules(self, rules: List[Dict[str, str]]):
         async with self._lock:
-            self.response_rules = _unescape_rules(rules)
+            self._rules_raw = rules
+            self._unescaped_rules = _unescape_rules(rules)
             logger.info(f"Port {self.port} rules updated: {len(rules)} rules")
     
     async def get_params(self) -> Dict[str, Any]:
@@ -356,7 +380,7 @@ class SerialServerProtocol(asyncio.Protocol):
         self.on_client_disconnect = on_client_disconnect
         self.transport = None
         self.state_machine = TelnetStateMachine()
-        self.read_buffer = bytearray()
+        self.read_buffer = deque()
         self.data_buffer = bytearray()
         self.loop = asyncio.get_event_loop()
     
@@ -393,7 +417,7 @@ class SerialServerProtocol(asyncio.Protocol):
     
     def process_buffer(self):
         while self.read_buffer:
-            byte = self.read_buffer.pop(0)
+            byte = self.read_buffer.popleft()
             
             if self.state_machine.state == TelnetStateMachine.NORMAL:
                 if byte == IAC:
@@ -430,7 +454,7 @@ class SerialServerProtocol(asyncio.Protocol):
             elif self.state_machine.state == TelnetStateMachine.SB_COM_PORT:
                 if byte == IAC:
                     if self.read_buffer:
-                        next_byte = self.read_buffer.pop(0)
+                        next_byte = self.read_buffer.popleft()
                         if next_byte == IAC:
                             self.state_machine.sb_buffer.append(IAC)
                         elif next_byte == SE:
@@ -617,6 +641,15 @@ class SerialServerManager:
         self.virtual_ports: Dict[int, VirtualSerialPort] = {}
         self.running_ports: Dict[int, bool] = {}
         self.clients: Dict[int, SerialServerProtocol] = {}
+        self._port_config_cache: Dict[int, Dict] = {}
+        self._build_port_cache()
+
+    def _build_port_cache(self):
+        """构建端口配置缓存字典"""
+        self._port_config_cache = {p['port']: p for p in self.config.get('ports', [])}
+
+    def get_port_config(self, port: int):
+        return self._port_config_cache.get(port)
     
     async def start_all(self) -> None:
         from config_manager import load_config
@@ -637,12 +670,9 @@ class SerialServerManager:
         
         from config_manager import load_config
         config = load_config()
-        port_config = None
-        
-        for p in config.get('ports', []):
-            if p['port'] == port:
-                port_config = p
-                break
+        self.config = config
+        self._build_port_cache()
+        port_config = self.get_port_config(port)
         
         if not port_config or not port_config.get('enabled', False):
             logger.warning(f"⚠️ 端口 {port} 未找到或未启用")
