@@ -161,7 +161,7 @@ async def stop_service():
     config = load_config()
     config["service_running"] = False
     save_config(config)
-    return {"success": True, "message": "所有端口已停止"}
+    return {"success": True, "message": "所有端口已停止完成"}
 
 
 @app.get("/api/service/status")
