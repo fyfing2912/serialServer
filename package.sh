@@ -61,7 +61,7 @@ COPYFILE_DISABLE=1 $TAR_CMD -czf "$PROJECT_DIR/dist/${PACKAGE_NAME}_${TIMESTAMP}
     "$(basename "$PROJECT_DIR")"
 
 if [ $? -eq 0 ]; then
-    success "打包完成！"
+    success "打包完成了！"
     echo ""
     info "打包文件位置:"
     ls -la "$PROJECT_DIR/dist/"
