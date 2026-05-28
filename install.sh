@@ -70,7 +70,7 @@ if ! groups | grep -q dialout; then
     fi
 fi
 
-success "安装完成！"
+success "安装完成，Good!"
 echo ""
 info "使用方法："
 info "  启动服务: $PROJECT_DIR/start_server.sh"
