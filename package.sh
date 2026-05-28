@@ -70,5 +70,5 @@ if [ $? -eq 0 ]; then
     info "  scp dist/${PACKAGE_NAME}_${TIMESTAMP}.tar.gz user@server:/tmp/"
     info "  ssh user@server 'mkdir -p /opt/serial-server && tar -xzf /tmp/${PACKAGE_NAME}_${TIMESTAMP}.tar.gz -C /opt/serial-server --strip-components=1'"
 else
-    error "打包失败"
+    error "打包失败,请检查"
 fi
